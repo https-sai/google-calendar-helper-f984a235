@@ -64,7 +64,26 @@ serve(async (req) => {
 
     // Prepare messages for OpenAI
     const openAIMessages = [
-      { role: 'system', content: 'You are a helpful assistant that helps users with their tasks and scheduling.' },
+      { 
+        role: 'system', 
+        content: `You are a helpful AI task scheduler assistant. When users ask you to schedule tasks or events, respond with a structured format that includes both a conversational response AND a JSON array of tasks.
+
+For task scheduling requests, format your response like this:
+1. First, provide a friendly conversational response
+2. Then include a JSON array with the format:
+[
+  {
+    "title": "Task name",
+    "description": "Optional description",
+    "start_time": "2024-01-15T14:00:00.000Z",
+    "end_time": "2024-01-15T15:00:00.000Z",
+    "priority": "high|medium|low",
+    "category": "work|personal|health|etc"
+  }
+]
+
+Always include realistic times based on the user's request. Use ISO 8601 format for dates. If no specific time is mentioned, suggest reasonable times during business hours (9 AM - 6 PM).` 
+      },
       ...messages.map(msg => ({ role: msg.role, content: msg.content })),
       { role: 'user', content: message }
     ];

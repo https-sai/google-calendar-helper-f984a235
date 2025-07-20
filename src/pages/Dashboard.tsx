@@ -9,6 +9,10 @@ import { useToast } from "@/hooks/use-toast";
 import { User } from "@supabase/supabase-js";
 import { Send, LogOut, Calendar } from "lucide-react";
 import ChatSidebar from "@/components/ChatSidebar";
+import TaskPreview from "@/components/TaskPreview";
+import CalendarEmbed from "@/components/CalendarEmbed";
+import { useGoogleCalendar } from "@/hooks/useGoogleCalendar";
+import { Task } from "@/types/calendar";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -24,6 +28,9 @@ const Dashboard = () => {
     created_at: string;
   }>>([]);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [lastAssistantMessage, setLastAssistantMessage] = useState<string>("");
+  const [calendarRefresh, setCalendarRefresh] = useState(0);
+  const { createMultipleEvents, parseTasksFromMessage } = useGoogleCalendar();
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -150,6 +157,9 @@ const Dashboard = () => {
 
       // Refresh messages
       await fetchChatMessages(currentChatId);
+      
+      // Store the assistant message for task parsing
+      setLastAssistantMessage(result.message);
 
       toast({
         title: "Success",
@@ -167,6 +177,18 @@ const Dashboard = () => {
       setSendingMessage(false);
     }
   };
+
+  const handleCreateCalendarEvents = async (tasks: Task[]) => {
+    try {
+      await createMultipleEvents(tasks);
+      setCalendarRefresh(prev => prev + 1);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Parse tasks from the last assistant message
+  const parsedTasks = lastAssistantMessage ? parseTasksFromMessage(lastAssistantMessage) : [];
 
   if (loading) {
     return (
@@ -284,43 +306,16 @@ const Dashboard = () => {
 
         {/* Calendar Section */}
         <div className="space-y-6">
-          {/* Google Calendar Embed */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
-                Your Calendar
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="bg-muted rounded-lg p-8 text-center">
-                <Calendar className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground">
-                  Google Calendar integration will be added here
-                </p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  This will show your calendar with AI-generated time blocks
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          {/* Task Preview */}
+          {parsedTasks.length > 0 && (
+            <TaskPreview 
+              tasks={parsedTasks} 
+              onCreateCalendarEvents={handleCreateCalendarEvents}
+            />
+          )}
 
-          {/* Events Summary */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Event Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="text-center text-muted-foreground py-4">
-                  <p>No events scheduled yet</p>
-                  <p className="text-sm mt-1">
-                    Start chatting to create time-blocked tasks!
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          {/* Google Calendar Embed */}
+          <CalendarEmbed refreshTrigger={calendarRefresh} />
         </div>
       </div>
     </div>
