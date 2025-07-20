@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { User } from "@supabase/supabase-js";
 import { Send, LogOut, Calendar } from "lucide-react";
+import ChatSidebar from "@/components/ChatSidebar";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -15,12 +16,14 @@ const Dashboard = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<Array<{
     id: string;
     role: 'user' | 'assistant';
     content: string;
-    timestamp: Date;
+    created_at: string;
   }>>([]);
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -51,30 +54,118 @@ const Dashboard = () => {
     await supabase.auth.signOut();
   };
 
+  const fetchChatMessages = async (chatId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('id, role, content, created_at')
+        .eq('chat_id', chatId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setChatMessages((data || []).map(msg => ({
+        ...msg,
+        role: msg.role as 'user' | 'assistant'
+      })));
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load messages",
+      });
+    }
+  };
+
+  const createNewChat = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('chats')
+        .insert({
+          user_id: user?.id,
+          title: `Chat ${new Date().toLocaleDateString()}`
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setCurrentChatId(data.id);
+      setChatMessages([]);
+      
+      // Add to sidebar
+      if ((window as any).addNewChatToSidebar) {
+        (window as any).addNewChatToSidebar(data);
+      }
+
+      toast({
+        title: "Success",
+        description: "New chat created",
+      });
+    } catch (error) {
+      console.error('Error creating chat:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to create new chat",
+      });
+    }
+  };
+
+  const handleChatSelect = (chatId: string) => {
+    setCurrentChatId(chatId);
+    fetchChatMessages(chatId);
+  };
+
   const handleSendMessage = async () => {
-    if (!message.trim()) return;
+    if (!message.trim() || !currentChatId || sendingMessage) return;
     
-    const userMessage = {
-      id: Date.now().toString(),
-      role: 'user' as const,
-      content: message,
-      timestamp: new Date()
-    };
-    
-    setChatMessages(prev => [...prev, userMessage]);
+    setSendingMessage(true);
+    const messageText = message;
     setMessage("");
-    
-    // TODO: Integrate with OpenAI
-    const assistantMessage = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant' as const,
-      content: "I'll help you schedule your tasks! (OpenAI integration coming soon)",
-      timestamp: new Date()
-    };
-    
-    setTimeout(() => {
-      setChatMessages(prev => [...prev, assistantMessage]);
-    }, 1000);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('No session');
+      }
+
+      const response = await fetch(`https://btisolrshtfydukknzox.supabase.co/functions/v1/chat-with-ai`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          chatId: currentChatId,
+          message: messageText,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to send message');
+      }
+
+      // Refresh messages
+      await fetchChatMessages(currentChatId);
+
+      toast({
+        title: "Success",
+        description: "Message sent successfully",
+      });
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to send message",
+      });
+      setMessage(messageText); // Restore message on error
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   if (loading) {
@@ -107,56 +198,89 @@ const Dashboard = () => {
       </header>
 
       {/* Main Content */}
-      <div className="container mx-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-80px)]">
+      <div className="container mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-80px)]">
+        {/* Chat Sidebar */}
+        <div className="lg:col-span-1">
+          <ChatSidebar
+            selectedChatId={currentChatId}
+            onChatSelect={handleChatSelect}
+            onNewChat={createNewChat}
+          />
+        </div>
+
         {/* Chat Section */}
-        <Card className="flex flex-col">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5" />
-              AI Task Scheduler
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 flex flex-col">
-            <ScrollArea className="flex-1 mb-4 h-96">
-              <div className="space-y-4">
-                {chatMessages.length === 0 ? (
-                  <div className="text-center text-muted-foreground py-8">
-                    <p>Tell me what tasks you need to get done and I'll help you schedule them!</p>
-                  </div>
-                ) : (
-                  chatMessages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`p-3 rounded-lg ${
-                        msg.role === 'user'
-                          ? 'bg-primary text-primary-foreground ml-auto max-w-[80%]'
-                          : 'bg-muted max-w-[80%]'
-                      }`}
-                    >
-                      <p className="text-sm">{msg.content}</p>
-                      <p className="text-xs opacity-70 mt-1">
-                        {msg.timestamp.toLocaleTimeString()}
-                      </p>
+        <div className="lg:col-span-1">
+          <Card className="h-full flex flex-col">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Send className="h-5 w-5" />
+                {currentChatId ? 'AI Task Scheduler' : 'Select or Create a Chat'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col">
+              {currentChatId ? (
+                <>
+                  <ScrollArea className="flex-1 mb-4 h-96">
+                    <div className="space-y-4">
+                      {chatMessages.length === 0 ? (
+                        <div className="text-center text-muted-foreground py-8">
+                          <p>Tell me what tasks you need to get done and I'll help you schedule them!</p>
+                        </div>
+                      ) : (
+                        chatMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`p-3 rounded-lg ${
+                              msg.role === 'user'
+                                ? 'bg-primary text-primary-foreground ml-auto max-w-[80%]'
+                                : 'bg-muted max-w-[80%]'
+                            }`}
+                          >
+                            <p className="text-sm">{msg.content}</p>
+                            <p className="text-xs opacity-70 mt-1">
+                              {new Date(msg.created_at).toLocaleTimeString()}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                      {sendingMessage && (
+                        <div className="p-3 rounded-lg bg-muted max-w-[80%]">
+                          <p className="text-sm">Thinking...</p>
+                        </div>
+                      )}
                     </div>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
-            
-            <div className="flex gap-2">
-              <Input
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Type your task or request..."
-                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                className="flex-1"
-              />
-              <Button onClick={handleSendMessage} size="icon">
-                <Send className="h-4 w-4" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+                  </ScrollArea>
+                  
+                  <div className="flex gap-2">
+                    <Input
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      placeholder="Type your task or request..."
+                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                      className="flex-1"
+                      disabled={sendingMessage}
+                    />
+                    <Button 
+                      onClick={handleSendMessage} 
+                      size="icon"
+                      disabled={sendingMessage || !message.trim()}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-center text-muted-foreground">
+                  <div>
+                    <Send className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p className="text-lg font-medium mb-2">No Chat Selected</p>
+                    <p className="text-sm">Create a new chat or select an existing one to start talking with the AI</p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Calendar Section */}
         <div className="space-y-6">
